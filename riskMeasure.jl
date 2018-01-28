@@ -50,6 +50,7 @@ function  getVaRESSingle(logReturns, level,
  portES = zeros(Float64, (1, nBootstrap))
  reSingleVaR = zeros(Float64, size(closePrice,1))
  reSingleES = zeros(Float64, size(closePrice,1))
+ resCVaR = zeros(Float64, size(closePrice,1))
 
 ## VaR computation for the assets with sufficient data
 for j =1:nBootstrap
@@ -71,6 +72,9 @@ end
  reSingleVaR[dataMergInd] = map(x -> mean(singleVaR[x,:]), 1:size(singleVaR,1))
  reSingleES[dataMergInd] = map(x -> mean(singleES[x,:]), 1:size(singleES,1))
  resCVaR[dataMergInd] = map(x -> mean(CVaR[:,x]), 1:size(CVaRj,1))
+
+ portValue = closePrice[dataMergInd]' * position[dataMergInd]
+ resCVaR[dataMergInd] = -(resCVaR[dataMergInd] .- mean(portVaR) * portValue)
 
 ## VaR for the assets with short time series
 VaRNotMerg = zeros(Float64, (nBootstrap , size(dataNotMergInd,2)))
@@ -126,14 +130,12 @@ end
 #closePriceMer = closePrice[dataMergInd]
 
 function  getVaRESPortCVaR(assSimRet, level, closePrice, position, dataMergInd)
- portValue = closePrice[dataMergInd]' * position[dataMergInd]
- posValue = closePrice[dataMergInd] .* position[dataMergInd]
- assSimRetPosValue = zeros(Float64, size(assSimRet,1))
+# portValue = closePrice[dataMergInd]' * position[dataMergInd]
+# posValue = closePrice[dataMergInd] .* position[dataMergInd]
  CVaRj = zeros(Float64, size(assSimRet,2))
-
  portSimRetSort = sort(vec(assSimRet * posValue / portValue))
 
- portVaR = quantile(portSimRetSort, (1-level))
+ portVaR = quantile(portSimRetSort, (1-level), sorted=true)
  portES = mean(portSimRetSort[portSimRetSort .< portVaR])
  hPosition = zeros(Float64, size(position[dataMergInd],1))
 
@@ -143,8 +145,7 @@ function  getVaRESPortCVaR(assSimRet, level, closePrice, position, dataMergInd)
   hPosValue = closePrice[dataMergInd] .* hPosition
   CVaRj[i] = quantile(vec(assSimRet * hPosValue), (1-level))
  end
- CVaRj = -(CVaRj .- portVaR * portValue)
-
+ #CVaRj = -(CVaRj .- portVaR * portValue)
  return(portVaR, portES, CVaRj)
 end
 

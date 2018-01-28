@@ -111,10 +111,10 @@ myGoogleFinData <- function( eDate = Sys.Date(),
     if(writeToExcel){
       saveWorkbook(wb, file, overwrite = TRUE)
     }
-    save(assets, closePrice, file = "gooFinData.RData")
+    save(assets, closePrice, file = "Data/gooFinData.RData")
   }else{
     # loading data from file
-    load(file = "gooFinData.RData", verbose=TRUE)
+    load(file = "Data/gooFinData.RData", verbose=TRUE)
   }
 
   reMergInfo <- getDataMergInd(assets)

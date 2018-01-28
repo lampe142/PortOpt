@@ -3,9 +3,11 @@ using TimeSeries, Plots, Quandl, CSV, Stats, XLSXReader, DataFrames, RCall, Exce
 
  df = Dates.DateFormat("y-m-d");
  dataFileName = "2017-12-20 Port.xlsm"
+cd("$(homedir())/Documents/Julia/PortOpt")
 
 include("importPortData.jl")
-(position, nAssets, posNames) = portData()
+(position, nAssets, posNames) =
+portData()
 
 ######################################################
  # get data for the last 3 years from googleFinance
