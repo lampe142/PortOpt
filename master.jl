@@ -1,13 +1,17 @@
 
-using TimeSeries, Plots, Quandl, CSV, Stats, XLSXReader, DataFrames, RCall, ExcelReaders
+workspace()
+using TimeSeries, Plots, Quandl, CSV, Stats, XLSXReader, DataFrames, RCall
+using RCall, Bootstrap
+using ExcelReaders
 
  df = Dates.DateFormat("y-m-d");
  dataFileName = "2017-12-20 Port.xlsm"
 cd("$(homedir())/Documents/Julia/PortOpt")
 
+global level, position, closePrice, dataMergInd
 include("importPortData.jl")
 (position, nAssets, posNames) =
-portData()
+portData(30)
 
 ######################################################
  # get data for the last 3 years from googleFinance
@@ -15,13 +19,46 @@ portData()
 
 R"source('writeFinDataToExcel.R')";
 R"source('getData.R')";
-R"data <- myGoogleFinData(loadDataNew = FALSE)";
+R"data <- myGoogleFinData(loadDataNew = F, nAssets=30)";
 include("getDataRToJulia.jl")
 
 include("riskMeasure.jl")
 (singleVaR, singleES, reSingleVaRConfInt, reSingleESConfInt, cVar, pVar ) =
 getVaRESSingle(logReturns, 0.99, closePrice, position, ticker,
 dataMergInd, dataNotMergInd)
+
+
+######################################################
+# test case
+######################################################
+getVaRES(assetsHist, logReturns, dataMergInd,
+         dataNotMergInd,expToExcel = false)
+
+include("riskMeasure.jl")
+test = zeros(Float64, (size(logReturns,1),2))
+test[:,1] = logReturns[:,1]
+test[:,2] = logReturns[:,2]
+#test[:,2] = logReturns[:,2]
+closePrice = [100.0; 100.0]
+position = [1; 1]
+ticker = ticker[[1,2]]
+dataMergInd = [1,2]
+dataNotMergInd = [0]
+
+(a, b, c, d, cVar2, portfolioVarTest) =
+getVaRESSingle(test, 0.99, closePrice, position, ticker,
+dataMergInd, dataNotMergInd, expToExcel = false, nBootstrap=2000,
+nSim =1000)
+
+sum(a .* closePrice)
+sum(cVar2)
+portfolioVarTest
+######################################################
+# test case
+######################################################
+
+
+
 
 pVar * position[dataMergInd]' * closePrice[dataMergInd]
 sum(cVar)

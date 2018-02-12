@@ -21,8 +21,9 @@ R"ticker <- data$ticker"
 @rget ticker
 R"dataMergInd <- data$dataMergInd"
 @rget dataMergInd
-dataMergInd = dataMergInd'
+dataMergInd = vec(dataMergInd')
 R"dataNotMergInd <- data$dataNotMergInd"
 @rget dataNotMergInd
+dataNotMergInd = vec(dataNotMergInd)
 R"dataLoadInd <- data$dataLoadInd"
 @rget dataLoadInd

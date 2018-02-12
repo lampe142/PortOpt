@@ -2,10 +2,20 @@
 # Date: 2017-12-23
 # Do: download and merge assets from google Finance
 
-#setwd("Documents/Julia")
+#setwd("Documents/Julia/PortOpt")
 
 #getECBCurUp(eDate = Sys.Date(), sDate = Sys.Date() - 364*3)
+paVaR <- function(LR, p=0.99, i, wb, ws){
+  rowTableStart <- 13
+  VaRGaus <- -PerformanceAnalytics:::VaR.Gaussian(R=LR[!is.na(LR)], p=0.99)
+  VaRHS <- -PerformanceAnalytics:::VaR.historical(R=LR[!is.na(LR)], p=0.99)
+  writeData(wb, ws, VaRGaus, startCol = 16, startRow = i+rowTableStart, rowNames = F, colNames = F)
+  writeData(wb, ws, VaRHS, startCol = 17, startRow = i+rowTableStart, rowNames = F, colNames = F)
+}
 
+
+
+library("openxlsx")
 getECBCurUp <- function(sDate,
                         eDate,
                         loadDataNew=TRUE){
@@ -26,6 +36,8 @@ getECBCurUp <- function(sDate,
   return(list(USEURO=USEURO))
 }
 
+
+
 # myGoogleFinData()
 myGoogleFinData <- function( eDate = Sys.Date(),
                              sDate = Sys.Date() - 364*3,
@@ -33,6 +45,9 @@ myGoogleFinData <- function( eDate = Sys.Date(),
                              verbose=TRUE,
                              writeToExcel=TRUE,
                              getECBCur=TRUE,
+                             perfAnaly=TRUE,
+                             openXLSXFile=T,
+                             nAssets=30,
                              file="Port.xlsx"){
   library(zoo)
   library(xts)
@@ -49,7 +64,7 @@ myGoogleFinData <- function( eDate = Sys.Date(),
   # Equity/ETF
   gooFinTicker <- t(read.xlsx(wb, sheet = "Risk", startRow = 2, colNames = FALSE,
                               rowNames = FALSE, detectDates = FALSE, skipEmptyRows = TRUE,
-                              skipEmptyCols = TRUE, rows = 4:30, cols = 4))
+                              skipEmptyCols = TRUE, rows = 14:(nAssets+13), cols = 3))
 
   assets <- vector("list")
   closePrice <- vector("list")
@@ -62,7 +77,7 @@ myGoogleFinData <- function( eDate = Sys.Date(),
 
   dollarToEuro<- logical(length = length(gooFinTicker))
   dollarToEuro[] <- FALSE
-  dollarToEuro[c(1,2,3,5,7,9)] <- TRUE
+  dollarToEuro[c(1,2,3,5,7,9,19,20,21,27,28)] <- TRUE
 
   if(verbose){
     show("LOADING assets")
@@ -100,7 +115,7 @@ myGoogleFinData <- function( eDate = Sys.Date(),
         sub$logReturn <- diff(log(sub[,"close"]), lag=1)
         closePrice[i] <- coredata(last(sub$close))
         assets[[i]] <- sub
-
+        paVaR(LR= sub$logReturn, p=0.99, i=i, wb=wb, ws='Risk')
         # export to excel file
         source("writeFinDataToExcel.R")
         if(writeToExcel){
@@ -117,7 +132,7 @@ myGoogleFinData <- function( eDate = Sys.Date(),
     load(file = "Data/gooFinData.RData", verbose=TRUE)
   }
 
-  reMergInfo <- getDataMergInd(assets)
+  reMergInfo <- getDataMergInd(assets, wb=wb, ws= 'Risk',file=file)
   dataMergInd <- reMergInfo$dataMergInd
   dataNotMergInd <- reMergInfo$dataNotMergInd
 
@@ -138,6 +153,10 @@ myGoogleFinData <- function( eDate = Sys.Date(),
   dataLoadInd <- 1:length(gooFinTicker)
   dataLoadInd <- dataLoadInd[dataLoad]
 
+if(openXLSXFile){
+  system(paste("open", file))
+}
+
   return(list(closePrice= closePrice,
               assetsHist= assets,
               lR = logReturns,
@@ -152,10 +171,11 @@ myGoogleFinData <- function( eDate = Sys.Date(),
 
 
 # Do: returns the assets indexes to merged based on minimum length and non empty and traded Volume not zero
-getDataMergInd  <- function(assets,
+getDataMergInd  <- function(assets, wb, ws, file,
                             minLength=350,
                             minNonZeroVolum=300,
-                            verbose=TRUE){
+                            verbose=TRUE,
+                            writeToExcel=T){
   dataMergInd <- c()
   dataNotMergInd <- c()
   for (i in 1:length(assets)){
@@ -171,5 +191,12 @@ getDataMergInd  <- function(assets,
   show(dataMergInd)
   show(dataNotMergInd)
   }
+  if(writeToExcel){
+    dataMergIndPrint <- rep(0,length(assets))
+    dataMergIndPrint[dataMergInd] = 1
+    writeData(wb, ws, dataMergIndPrint, startCol = 22, startRow = 14, rowNames = FALSE)
+    saveWorkbook(wb, file, overwrite = TRUE)
+  }
+
   return(list(dataMergInd=dataMergInd, dataNotMergInd= dataNotMergInd))
 }

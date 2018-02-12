@@ -1,21 +1,22 @@
 # Author: Max Lampe
 # Date: 2017-12-23
-# Do: compute risk measures for a portfolio
+# Do: compute risk measures nAssets=30 a portfolio
 
 ################################################################################
 ## computre a single bootstrap
 ################################################################################
 function bootStrapSample(logReturns,
-                nSim = 1000,
-                current= size(logReturns,1),
-                nLookback=250,
-                ndays=1)
+                         current= size(logReturns,1),
+                         nLookback=250,
+                         ndays=1;
+                         nSim = 1000)
+
  samTimLength = size(logReturns,1)
  assSimRet = zeros(Float64, (nSim, size(logReturns,2)))
  current = size(logReturns,1)
  nLookback = size(logReturns,1) -1
  # looping of the time length of the simulation (i.e. 1, 5, 10 day)
- for i = 1:ndays
+ nAssets=30 i = 1:ndays
   selBoot = rand((current-nLookback):(current-1), nSim)
   # looping of the difference
   for j = 1:nSim
@@ -25,103 +26,112 @@ function bootStrapSample(logReturns,
  return assSimRet
 end
 
+
+################################################################################
+# component Value at Risk for bootstrap
+################################################################################
+function bootCVar(bootLogReturns)
+
+ global level, position, closePrice, dataMergInd
+ portVar = map(x -> quantile(bootLogReturns[:,x],1-level),1:size(bootLogReturns,2))' *
+ (position[dataMergInd] .* closePrice[dataMergInd])
+ cVar = zeros(Float64, size(bootLogReturns,2))
+ hPosition = zeros(Float64, size(bootLogReturns,2))
+
+ for i =1:size(bootLogReturns,2)
+  hPosition[:] = position[dataMergInd]
+  hPosition[i] = 0
+  hPortVar = map(x -> quantile(bootLogReturns[:,x],1-level),1:size(bootLogReturns,2))' *
+  (hPosition .* closePrice[dataMergInd])
+  cVar[i] = portVar - hPortVar
+ end
+ return(cVar)
+end
+
+################################################################################
+# portfolio Value at Risk for bootstrap
+################################################################################
+function bootPortVar(bootLogReturns)
+ global level, position, closePrice, dataMergInd
+ return(
+  map(x -> quantile(bootLogReturns[:,x],1-level),1:size(bootLogReturns,2))' *
+  (position[dataMergInd] .* closePrice[dataMergInd])
+ )
+end
+
+function bootSingleVar(bootLogReturns)
+ global level, position, closePrice, dataMergInd
+ hPosition = position[dataMergInd]
+ hClosePrice = closePrice[dataMergInd]
+ return(
+  map(x -> quantile(bootLogReturns[:,x],1-level)* position[x] * closePrice[x]
+  ,1:size(bootLogReturns,2))
+ )
+end
+
+function bootSingleVarNotCum(bootLogReturns)
+ global level
+ return(quantile(bootLogReturns, 1-level))
+end
+
 ################################################################################
 ##
 ################################################################################
-function  getVaRESSingle(logReturns, level,
-                         closePrice,
-                         position,
-                         ticker,
-                         dataMergInd,
-                         dataNotMergInd,
-                         confInt = true,
-                         expToExcel = true)
- nAssets = size(dataMergInd,1)
- nTotalAssets = size(closePrice)
- nBootstrap = 500
- singleVaR = zeros(Float64, (nAssets, nBootstrap))
- CVaR = zeros(Float64, (nBootstrap, nAssets))
- singleES = zeros(Float64, (nAssets, nBootstrap))
- portfolioVaR = 0.0;
- portfolioES = 0.0;
- nReturns = 1000;
- confIntValues = [0.05, 0.95]
- portVaR = zeros(Float64, (1, nBootstrap))
- portES = zeros(Float64, (1, nBootstrap))
- reSingleVaR = zeros(Float64, size(closePrice,1))
- reSingleES = zeros(Float64, size(closePrice,1))
- resCVaR = zeros(Float64, size(closePrice,1))
+function  getVaRES(assetsHist,
+                   logReturns,
+                   dataMergInd,
+                   dataNotMergInd;
+                   nBoot = 1000,
+                   expToExcel = true)
+ nAssets = size(assetsHist,1)
+ cVaR      = zeros(Float64, (nAssets))
+ singleES  = zeros(Float64, (nAssets))
+ singleVaR = zeros(Float64, (nAssets))
+ portVaR   = 0.0;
+ portES    = 0.0;
 
-## VaR computation for the assets with sufficient data
-for j =1:nBootstrap
- assSimRet = bootStrapSample(logReturns, nReturns, 394)
- # single assets
- for i=1:nAssets
-  sortReturn = sort(assSimRet[:,i])
-  singleVaR[i, j] = quantile(sortReturn, (1-level), sorted=true)
-  singleES[i, j] = mean(sortReturn[sortReturn .< singleVaR[i, j]])
- end
- # portfolio VaR and ES and CVaR
- (portVaRj, b, CVaRj) =
- getVaRESPortCVaR(assSimRet, level, closePrice, position, dataMergInd)
- portVaR[j] = portVaRj
- portES[j] = b
- CVaR[j,:] = CVaRj
+## value at risk:
+# component
+cVaRBootRes =  bootstrap(logReturns, bootCVar, BasicSampling(nBoot))
+cVaR[dataMergInd] = collect(cVaRBootRes.t0)
+
+# portfolio
+portVaRRes = bootstrap(logReturns, bootPortVar, BasicSampling(nBoot))
+portVaR = collect(portVaRRes.t0)
+
+# single
+singleVaRRes = bootstrap(logReturns, bootSingleVar,BasicSampling(nBoot))
+singleVaR[dataMergInd] = collect(singleVaRRes.t0)
+
+# position not included in the cumulative simulation
+for i in dataNotMergInd
+ index = collect(!(assetsHist[i][:,6] .==0.0)) + collect(!isnan(assetsHist[i][:,6])) .==2
+ ret = assetsHist[i][index,6] * closePrice[i] * position[i]
+
+ singleVaRRes = bootstrap(ret, bootSingleVarNotCum, BasicSampling(nBoot))
+ singleVaR[i] = collect(singleVaRRes.t0)[1]
 end
- resCVaR = zeros(Float64, nTotalAssets)
- reSingleVaR[dataMergInd] = map(x -> mean(singleVaR[x,:]), 1:size(singleVaR,1))
- reSingleES[dataMergInd] = map(x -> mean(singleES[x,:]), 1:size(singleES,1))
- resCVaR[dataMergInd] = map(x -> mean(CVaR[:,x]), 1:size(CVaRj,1))
-
- portValue = closePrice[dataMergInd]' * position[dataMergInd]
- resCVaR[dataMergInd] = -(resCVaR[dataMergInd] .- mean(portVaR) * portValue)
-
-## VaR for the assets with short time series
-VaRNotMerg = zeros(Float64, (nBootstrap , size(dataNotMergInd,2)))
-ESNotMerg = zeros(Float64, (nBootstrap , size(dataNotMergInd,2)))
-for i in 1:size(dataNotMergInd,2)
- for j=1:nBootstrap
-  bootSamNonMerg = vec(bootStrapSample(assetsHist[dataNotMergInd[i]][2:end,6]))
-  VaRNotMerg[j,i] = quantile(bootSamNonMerg, (1-level))
-  ESNotMerg[j,i] = mean(bootSamNonMerg[bootSamNonMerg .< VaRNotMerg[j,i]])
- end
-end
-cc = zeros(Float64, size(dataNotMergInd,2))
-cc = map(x -> mean(VaRNotMerg[:,x]), 1:size(VaRNotMerg,2))
-reSingleES = map(x -> mean(singleES[x,:]), 1:size(singleES,1))
-resCVaR[dataNotMergInd] = cc .* closePrice[dataNotMergInd]' .* position[dataNotMergInd]'
 
 
-# compute best estimate over bootStraps
+## expected shortfall:
+# portfolio
+# portES = bootstrap(logReturns[:,dataMergInd], , BasicSampling(n_boot))
+# single
+# singleES = bootstrap(logReturns[:,dataMergInd], , BasicSampling(n_boot))
 
-# compute confidence Intervals over bootStraps
-if(confInt)
- reSingleVaRConfInt = zeros(Float64, (size(dataMergInd,1), 2))
- reSingleESConfInt = zeros(Float64, (size(dataMergInd,1), 2))
- for i = 1:size(singleVaR,1)
-  reSingleVaRConfInt[i,:] = quantile(singleVaR[i,:], confIntValues)
-  reSingleESConfInt[i,:] = quantile(singleVaR[i,:], confIntValues)
- end
 
  if(expToExcel)
-  expVaRES(mean(portVaR),
-           mean(portES),
-           reSingleVaR,
-           reSingleES,
-           dataMergInd,
-           ticker,
-           resCVaR)
-          # reSingleVaRConfInt,
-          # reSingleESConfInt,
-
+  expVaRES(singleVaR, singleES, portVaR, portES, cVaR, dataMergInd)
  end
- return(reSingleVaR, reSingleES, reSingleVaRConfInt, reSingleESConfInt, resCVaR, mean(portVaR))
+ return(singleVaR, singleES, portVaR, portES, cVaR)
 end
-return(reSingleVaR, reSingleES)
-end
+
+
+
+
 
 ################################################################################
-## Value at Risk and Expected Shortflall for the Portfolio
+## Value at Risk and Expected Shortflall nAssets=30 the Portfolio
 ################################################################################
 
 #(portVaR, portES, CVaRj) = getVaRESPortCVaR(assSimRet, 0.9,
@@ -130,8 +140,8 @@ end
 #closePriceMer = closePrice[dataMergInd]
 
 function  getVaRESPortCVaR(assSimRet, level, closePrice, position, dataMergInd)
-# portValue = closePrice[dataMergInd]' * position[dataMergInd]
-# posValue = closePrice[dataMergInd] .* position[dataMergInd]
+ portValue = closePrice[dataMergInd]' * position[dataMergInd]
+ posValue = closePrice[dataMergInd] .* position[dataMergInd]
  CVaRj = zeros(Float64, size(assSimRet,2))
  portSimRetSort = sort(vec(assSimRet * posValue / portValue))
 
@@ -139,69 +149,42 @@ function  getVaRESPortCVaR(assSimRet, level, closePrice, position, dataMergInd)
  portES = mean(portSimRetSort[portSimRetSort .< portVaR])
  hPosition = zeros(Float64, size(position[dataMergInd],1))
 
- for i=1:size(assSimRet,2)
+ nAssets=30 i=1:size(assSimRet,2)
   hPosition[:] = position[dataMergInd]
   hPosition[i] = 0.0
   hPosValue = closePrice[dataMergInd] .* hPosition
   CVaRj[i] = quantile(vec(assSimRet * hPosValue), (1-level))
  end
- #CVaRj = -(CVaRj .- portVaR * portValue)
+ CVaRj = -(CVaRj .- portVaR * portValue)
  return(portVaR, portES, CVaRj)
 end
 
 ################################################################################
 ## Export Values singel and portfolio ES and VaR and conf Intervall
 ################################################################################
-function  expVaRES(portVaR,
-                   portES,
-                   reSingleVaR,
-                   reSingleES,
-                   dataMergInd,
-                   ticker,
-#                   reSingleVaRConfInt,
-#                  reSingleESConfInt,
-                   resCVaR)
+function  expVaRES(singleVaR, singleES, portVaR, portES, cVaR, dataMergInd)
 
-expCVaR = zeros(Float64,size(ticker,2))
-inMerg = zeros(Float64,size(ticker,2))
+ind = zeros(Int8, size(singleVaR))
+ind[dataMergInd] = 1
 
-inMerg[dataMergInd]=1
-singleVaRConfInt = zeros(Float64, size(ticker,2),2)
-singleESConfInt = zeros(Float64, size(ticker,2),2)
-# singleVaRConfInt[dataMergInd,:] = reSingleVaRConfInt;
-# singleESConfInt[dataMergInd,:] = reSingleESConfInt;
-# singleVaRConfInt095 = singleVaRConfInt[:,1]
-# singleVaRConfInt005 = singleVaRConfInt[:,2]
-# singleESConfInt095 = singleESConfInt[:,1]
-#singleESConfInt005 = singleESConfInt[:,2]
-
-# @rput singleVaRConfInt095
-# @rput singleVaRConfInt005
-# @rput singleESConfInt095
-#@rput singleESConfInt005
-@rput reSingleVaR
+@rput singleVaR
+@rput singleES
 @rput portVaR
 @rput portES
-@rput singleVaRConfInt
-@rput singleESConfInt
-@rput resCVaR
-@rput inMerg
+@rput cVaR
+@rput ind
+
 R"
+ sRow <- 14
  expFile <- 'Port.xlsx'
  wb <- loadWorkbook(file = expFile)
- writeData(wb, 'Risk', portVaR, startCol = 4, startRow = 2, rowNames = FALSE)
- writeData(wb, 'Risk', portES, startCol = 5, startRow = 2, rowNames = FALSE)
+ writeData(wb, 'Risk', portVaR, startCol = 5, startRow = 5, rowNames = FALSE)
+ writeData(wb, 'Risk', portES, startCol = 5, startRow = 9, rowNames = FALSE)
 
- writeData(wb, 'Risk', reSingleVaR, startCol = 8, startRow = 4, rowNames = FALSE)
- writeData(wb, 'Risk', resCVaR, startCol = 10, startRow = 4, rowNames = FALSE)
- writeData(wb, 'Risk', inMerg, startCol = 18, startRow = 4, rowNames = FALSE)
+ writeData(wb, 'Risk', singleVaR, startCol = 19, startRow = sRow, rowNames = FALSE)
+ writeData(wb, 'Risk', cVaR, startCol = 20, startRow = sRow, rowNames = FALSE)
+ writeData(wb, 'Risk', ind, startCol = 22, startRow = sRow, rowNames = FALSE)
  saveWorkbook(wb, expFile, overwrite = TRUE)
+ system(paste('open', expFile))
 "
-#  writeData(wb, 'CurrentPositions', expSingleVar, startCol = 21, startRow = 3, rowNames = FALSE)
-# writeData(wb, 'CurrentPositions', expSingleES, startCol = 26, startRow = 3, rowNames = FALSE)
-# writeData(wb, 'CurrentPositions', singleVaRConfInt005, startCol = 23, startRow = 3, rowNames = FALSE)
-# writeData(wb, 'CurrentPositions', singleVaRConfInt095, startCol = 22, startRow = 3, rowNames = FALSE)
-# writeData(wb, 'CurrentPositions', singleESConfInt095, startCol = 27, startRow = 3, rowNames = FALSE)
-# writeData(wb, 'CurrentPositions', singleESConfInt005, startCol = 28, startRow = 3, rowNames = FALSE)
-
 end
