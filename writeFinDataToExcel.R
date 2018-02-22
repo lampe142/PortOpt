@@ -1,5 +1,5 @@
 writeFinDataToExcel <- function(sub, closePriceI, sdLogReturn, i, wb, ws){
-    rowTableStart = 13
+    rowTableStart = 2
   # export to Excel
     lengthData = length(coredata(sub$close))
     #  createStyle(numFmt="NUMBER")

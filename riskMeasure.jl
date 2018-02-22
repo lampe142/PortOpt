@@ -2,30 +2,6 @@
 # Date: 2017-12-23
 # Do: compute risk measures nAssets=30 a portfolio
 
-################################################################################
-## computre a single bootstrap
-################################################################################
-function bootStrapSample(logReturns,
-                         current= size(logReturns,1),
-                         nLookback=250,
-                         ndays=1;
-                         nSim = 1000)
-
- samTimLength = size(logReturns,1)
- assSimRet = zeros(Float64, (nSim, size(logReturns,2)))
- current = size(logReturns,1)
- nLookback = size(logReturns,1) -1
- # looping of the time length of the simulation (i.e. 1, 5, 10 day)
- nAssets=30 i = 1:ndays
-  selBoot = rand((current-nLookback):(current-1), nSim)
-  # looping of the difference
-  for j = 1:nSim
-   assSimRet[j,:] = assSimRet[j,:] + logReturns[selBoot[j],:]
-  end
- end
- return assSimRet
-end
-
 
 ################################################################################
 # component Value at Risk for bootstrap
@@ -33,30 +9,46 @@ end
 function bootCVar(bootLogReturns)
 
  global level, position, closePrice, dataMergInd
- portVar = map(x -> quantile(bootLogReturns[:,x],1-level),1:size(bootLogReturns,2))' *
- (position[dataMergInd] .* closePrice[dataMergInd])
+ portVar = quantile(bootLogReturns * (position[dataMergInd] .* closePrice[dataMergInd]),1-level)
  cVar = zeros(Float64, size(bootLogReturns,2))
  hPosition = zeros(Float64, size(bootLogReturns,2))
 
  for i =1:size(bootLogReturns,2)
   hPosition[:] = position[dataMergInd]
   hPosition[i] = 0
-  hPortVar = map(x -> quantile(bootLogReturns[:,x],1-level),1:size(bootLogReturns,2))' *
-  (hPosition .* closePrice[dataMergInd])
+  hPortVar = quantile(bootLogReturns * (hPosition .* closePrice[dataMergInd]),1-level)
   cVar[i] = portVar - hPortVar
  end
  return(cVar)
 end
 
 ################################################################################
+# marginal Value at Risk for bootstrap
+################################################################################
+function bootMVar(bootLogReturns)
+
+ global level, position, closePrice, dataMergInd
+ portVar = quantile(bootLogReturns * (position[dataMergInd] .* closePrice[dataMergInd]),1-level)
+ mVar = zeros(Float64, size(bootLogReturns,2))
+ hPosition = zeros(Float64, size(bootLogReturns,2))
+
+ for i =1:size(bootLogReturns,2)
+  hPosition[:] = position[dataMergInd]
+  hPosition[i] = hPosition[i] + 1/closePrice[i]
+  hPortVar = quantile(bootLogReturns * (hPosition .* closePrice[dataMergInd]),1-level)
+  mVar[i] = hPortVar - portVar
+ end
+ return(mVar)
+end
+
+
+################################################################################
 # portfolio Value at Risk for bootstrap
 ################################################################################
 function bootPortVar(bootLogReturns)
  global level, position, closePrice, dataMergInd
- return(
-  map(x -> quantile(bootLogReturns[:,x],1-level),1:size(bootLogReturns,2))' *
-  (position[dataMergInd] .* closePrice[dataMergInd])
- )
+ return quantile(bootLogReturns * (position[dataMergInd] .* closePrice[dataMergInd]),1-level)
+
 end
 
 function bootSingleVar(bootLogReturns)
@@ -64,9 +56,13 @@ function bootSingleVar(bootLogReturns)
  hPosition = position[dataMergInd]
  hClosePrice = closePrice[dataMergInd]
  return(
-  map(x -> quantile(bootLogReturns[:,x],1-level)* position[x] * closePrice[x]
+  map(x -> quantile(bootLogReturns[:,x],1-level)* hPosition[x] * hClosePrice[x]
   ,1:size(bootLogReturns,2))
  )
+end
+
+function bootSingleVar2(bootLogReturns)
+ return(quantile(bootLogReturns,1-level))
 end
 
 function bootSingleVarNotCum(bootLogReturns)
@@ -83,8 +79,10 @@ function  getVaRES(assetsHist,
                    dataNotMergInd;
                    nBoot = 1000,
                    expToExcel = true)
+
  nAssets = size(assetsHist,1)
  cVaR      = zeros(Float64, (nAssets))
+ mVaR      = zeros(Float64, (nAssets))
  singleES  = zeros(Float64, (nAssets))
  singleVaR = zeros(Float64, (nAssets))
  portVaR   = 0.0;
@@ -95,74 +93,53 @@ function  getVaRES(assetsHist,
 cVaRBootRes =  bootstrap(logReturns, bootCVar, BasicSampling(nBoot))
 cVaR[dataMergInd] = collect(cVaRBootRes.t0)
 
+# marginal
+mVaRBootRes =  bootstrap(logReturns, bootMVar, BasicSampling(nBoot))
+mVaR[dataMergInd] = collect(mVaRBootRes.t0)
+
 # portfolio
 portVaRRes = bootstrap(logReturns, bootPortVar, BasicSampling(nBoot))
 portVaR = collect(portVaRRes.t0)
 
 # single
-singleVaRRes = bootstrap(logReturns, bootSingleVar,BasicSampling(nBoot))
-singleVaR[dataMergInd] = collect(singleVaRRes.t0)
+#singleVaRRes = bootstrap(logReturns, bootSingleVar,BasicSampling(nBoot))
+#singleVaR[dataMergInd] = collect(singleVaRRes.t0)
 
-# position not included in the cumulative simulation
-for i in dataNotMergInd
- index = collect(!(assetsHist[i][:,6] .==0.0)) + collect(!isnan(assetsHist[i][:,6])) .==2
- ret = assetsHist[i][index,6] * closePrice[i] * position[i]
-
- singleVaRRes = bootstrap(ret, bootSingleVarNotCum, BasicSampling(nBoot))
- singleVaR[i] = collect(singleVaRRes.t0)[1]
+lRMerg = map( x -> logReturns[:,x] * (closePrice[dataMergInd] .* position[dataMergInd])[x]
+, 1:size(logReturns,2))
+for i in 1:size(dataMergInd,1)
+ singleVaRRes = bootstrap(lRMerg[i], bootSingleVar2, BasicSampling(nBoot))
+ singleVaR[dataMergInd[i]] = collect(singleVaRRes.t0)[1]
 end
 
+# position not included in the cumulative simulation
+if(dataNotMergInd != [0])
+ for i in dataNotMergInd
+  index = collect(!(assetsHist[i][:,6] .==0.0)) + collect(!isnan(assetsHist[i][:,6])) .==2
+  ret = assetsHist[i][index,6] * closePrice[i] * position[i]
 
+  singleVaRRes = bootstrap(ret, bootSingleVarNotCum, BasicSampling(nBoot))
+  singleVaR[i] = collect(singleVaRRes.t0)[1]
+ end
+end
 ## expected shortfall:
 # portfolio
 # portES = bootstrap(logReturns[:,dataMergInd], , BasicSampling(n_boot))
 # single
 # singleES = bootstrap(logReturns[:,dataMergInd], , BasicSampling(n_boot))
 
-
+# Export Data into the EXcel File 
  if(expToExcel)
-  expVaRES(singleVaR, singleES, portVaR, portES, cVaR, dataMergInd)
+  expVaRES(singleVaR, singleES, portVaR, portES, cVaR, mVaR, dataMergInd)
  end
- return(singleVaR, singleES, portVaR, portES, cVaR)
-end
 
-
-
-
-
-################################################################################
-## Value at Risk and Expected Shortflall nAssets=30 the Portfolio
-################################################################################
-
-#(portVaR, portES, CVaRj) = getVaRESPortCVaR(assSimRet, 0.9,
-#closePrice[dataMergInd], assVolums[dataMergInd])
-#position = assVolums[dataMergInd]
-#closePriceMer = closePrice[dataMergInd]
-
-function  getVaRESPortCVaR(assSimRet, level, closePrice, position, dataMergInd)
- portValue = closePrice[dataMergInd]' * position[dataMergInd]
- posValue = closePrice[dataMergInd] .* position[dataMergInd]
- CVaRj = zeros(Float64, size(assSimRet,2))
- portSimRetSort = sort(vec(assSimRet * posValue / portValue))
-
- portVaR = quantile(portSimRetSort, (1-level), sorted=true)
- portES = mean(portSimRetSort[portSimRetSort .< portVaR])
- hPosition = zeros(Float64, size(position[dataMergInd],1))
-
- nAssets=30 i=1:size(assSimRet,2)
-  hPosition[:] = position[dataMergInd]
-  hPosition[i] = 0.0
-  hPosValue = closePrice[dataMergInd] .* hPosition
-  CVaRj[i] = quantile(vec(assSimRet * hPosValue), (1-level))
- end
- CVaRj = -(CVaRj .- portVaR * portValue)
- return(portVaR, portES, CVaRj)
+ return(singleVaR, singleES, portVaR, portES, cVaR, mVaR)
 end
 
 ################################################################################
 ## Export Values singel and portfolio ES and VaR and conf Intervall
 ################################################################################
-function  expVaRES(singleVaR, singleES, portVaR, portES, cVaR, dataMergInd)
+function  expVaRES(singleVaR, singleES, portVaR, portES, cVaR, mVaR, dataMergInd)
 
 ind = zeros(Int8, size(singleVaR))
 ind[dataMergInd] = 1
@@ -172,19 +149,22 @@ ind[dataMergInd] = 1
 @rput portVaR
 @rput portES
 @rput cVaR
+@rput mVaR
 @rput ind
 
 R"
- sRow <- 14
+ sRow <- 3
  expFile <- 'Port.xlsx'
  wb <- loadWorkbook(file = expFile)
- writeData(wb, 'Risk', portVaR, startCol = 5, startRow = 5, rowNames = FALSE)
- writeData(wb, 'Risk', portES, startCol = 5, startRow = 9, rowNames = FALSE)
 
  writeData(wb, 'Risk', singleVaR, startCol = 19, startRow = sRow, rowNames = FALSE)
  writeData(wb, 'Risk', cVaR, startCol = 20, startRow = sRow, rowNames = FALSE)
  writeData(wb, 'Risk', ind, startCol = 22, startRow = sRow, rowNames = FALSE)
+ writeData(wb, 'Risk', mVaR, startCol = 23, startRow = sRow, rowNames = FALSE)
  saveWorkbook(wb, expFile, overwrite = TRUE)
  system(paste('open', expFile))
 "
+# writeData(wb, 'Risk', portVaR, startCol = 5, startRow = 5, rowNames = FALSE)
+# writeData(wb, 'Risk', portES, startCol = 5, startRow = 9, rowNames = FALSE)
+
 end

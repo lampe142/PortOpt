@@ -6,7 +6,7 @@
 
 #getECBCurUp(eDate = Sys.Date(), sDate = Sys.Date() - 364*3)
 paVaR <- function(LR, p=0.99, i, wb, ws){
-  rowTableStart <- 13
+  rowTableStart <- 2
   VaRGaus <- -PerformanceAnalytics:::VaR.Gaussian(R=LR[!is.na(LR)], p=0.99)
   VaRHS <- -PerformanceAnalytics:::VaR.historical(R=LR[!is.na(LR)], p=0.99)
   writeData(wb, ws, VaRGaus, startCol = 16, startRow = i+rowTableStart, rowNames = F, colNames = F)
@@ -15,10 +15,14 @@ paVaR <- function(LR, p=0.99, i, wb, ws){
 
 
 
-library("openxlsx")
+# library("openxlsx")
+# b <- getECBCurUp(eDate = Sys.Date(),sDate = Sys.Date() - 364*3)
 getECBCurUp <- function(sDate,
                         eDate,
-                        loadDataNew=TRUE){
+                        loadDataNew=T){
+
+
+
   if(loadDataNew){    ## Currencies
     # EUROCAD
     #  filter1 <- list(startPeriod = "2015-01-10", endPeriod = "2018-01-16", detail = 'full')
@@ -27,28 +31,50 @@ getECBCurUp <- function(sDate,
     # USEURO
     filter2 <- list(startPeriod = as.character(sDate),
                     endPeriod = as.character(eDate), detail = 'full')
+    # US Dollar for many assets
     USEURO <- get_data("EXR.D.USD.EUR.SP00.A", filter2);
     USEURO <- xts(x=USEURO$obsvalue, order.by = as.Date(USEURO$obstime))
+    # Hong Kong Dollar for Indonesia ETF position
+    HKDEURO <- get_data("EXR.D.HKD.EUR.SP00.A", filter2);
+    HKDEURO <- xts(x=HKDEURO$obsvalue, order.by = as.Date(HKDEURO$obstime))
+
+
     save(USEURO, file = "ECBcurrData.RData")
   } else{
     load(file = "ECBcurrData.RData", verbose=TRUE)
   }
-  return(list(USEURO=USEURO))
+  return(list(USEURO=USEURO, HKDEURO=HKDEURO))
 }
 
+# corrects for in differently quoted currencies
+curAdj <- function(curr, sub){
+    trans <- merge(sub, curr, join='left')
+    ind = which(is.na(trans$curr))
+    while(ind[length(ind)] == length(trans$curr)){
+      ind = ind[1:(length(ind)-1)]
+      trans$curr[1:(length(trans$curr)-1)]
+    }
+    trans$curr.USEURO[ind] = (coredata(trans$curr[ind+1])+coredata(trans$curr[ind-1]))/2
+    sub$open <- sub$open / trans$curr
+    sub$high <- sub$high / trans$curr
+    sub$low <- sub$low / trans$curr
+    sub$close <- sub$close / trans$curr
+  return(sub)
+}
 
 
 # myGoogleFinData()
 myGoogleFinData <- function( eDate = Sys.Date(),
                              sDate = Sys.Date() - 364*3,
-                             loadDataNew = TRUE,
-                             verbose=TRUE,
-                             writeToExcel=TRUE,
-                             getECBCur=TRUE,
-                             perfAnaly=TRUE,
+                             loadDataNew = T,
+                             verbose=T,
+                             writeToExcel=T,
+                             getECBCur=T,
+                             perfAnaly=T,
                              openXLSXFile=T,
                              nAssets=30,
-                             file="Port.xlsx"){
+                             file="Port.xlsx",
+                             indexDollarToEuro){
   library(zoo)
   library(xts)
   library(quantmod)
@@ -57,46 +83,47 @@ myGoogleFinData <- function( eDate = Sys.Date(),
 
   wb <- loadWorkbook(file = file)
   curr <- c()
+# If ECB - Euro Dollar information is active
   if(getECBCur){
-    curr<- getECBCurUp(sDate, eDate)
+    curr<- getECBCurUp(sDate, eDate, loadDataNew=loadDataNew)
   }
 
-  # Equity/ETF
-  gooFinTicker <- t(read.xlsx(wb, sheet = "Risk", startRow = 2, colNames = FALSE,
-                              rowNames = FALSE, detectDates = FALSE, skipEmptyRows = TRUE,
-                              skipEmptyCols = TRUE, rows = 14:(nAssets+13), cols = 3))
+  # get Assets ticker for google finance
+  gooFinTicker <- t(read.xlsx(wb, sheet = "Risk", startRow = 3, colNames = F,
+                              rowNames = F, detectDates = F, skipEmptyRows = T,
+                              skipEmptyCols = T, rows = 3:(nAssets+2), cols = 3))
 
   assets <- vector("list")
   closePrice <- vector("list")
   dataLoaded <- logical(length = length(gooFinTicker))
-  dataLoaded[] <- TRUE
+  dataLoaded[] <- T
 
   dataLoad <- logical(length = length(gooFinTicker))
-  dataLoad[] <- TRUE
-  # dataLoad[c(11, 15)] <- FALSE
+  dataLoad[] <- T
 
-  dollarToEuro<- logical(length = length(gooFinTicker))
-  dollarToEuro[] <- FALSE
-  dollarToEuro[c(1,2,3,5,7,9,19,20,21,27,28)] <- TRUE
+  dollarToEuro <- logical(length = length(gooFinTicker))
+  dollarToEuro[] <- F
+  HKDToEuro <- logical(length = length(gooFinTicker))
+  HKDToEuro[] <- F
+  HKDToEuro[3] <- F
+  indexDollarToEuro
+  dollarToEuro[indexDollarToEuro] <- T
 
   if(verbose){
     show("LOADING assets")
     show(gooFinTicker[dataLoad])
   }
 
-  if(loadDataNew){
-    if(getECBCur){
-      curr <- getECBCurUp(sDate, eDate)
-    }
 
+if(loadDataNew){
     for (i in 1:length(gooFinTicker)){
       #  try(
       if(dataLoad[i]){
         show(gooFinTicker[i])
         sub <- getSymbols(gooFinTicker[i], from=sDate, to=eDate,
-                          src='google', getSymbols.warning4.0=FALSE,
-                          return.class='xts', adjust=TRUE,
-                          auto.assign= FALSE)
+                          src='google', getSymbols.warning4.0=F,
+                          return.class='xts', adjust=T,
+                          auto.assign= F)
         colnames(sub) <- c("open", "high", "low","close", "volume")
         # US Dollar to Euro transformation
         if (getECBCur && dollarToEuro[i]){
@@ -112,6 +139,9 @@ myGoogleFinData <- function( eDate = Sys.Date(),
           sub$low <- sub$low / trans$curr.USEURO
           sub$close <- sub$close / trans$curr.USEURO
         }
+        if (getECBCur && HKDToEuro[i]){
+          sub <- curAdj(curr ,sub)
+        }
         sub$logReturn <- diff(log(sub[,"close"]), lag=1)
         closePrice[i] <- coredata(last(sub$close))
         assets[[i]] <- sub
@@ -119,17 +149,18 @@ myGoogleFinData <- function( eDate = Sys.Date(),
         # export to excel file
         source("writeFinDataToExcel.R")
         if(writeToExcel){
-          writeFinDataToExcel(sub, closePrice[i], sd(sub$logReturn, na.rm = TRUE), i, wb, "Risk");
+          writeFinDataToExcel(sub, closePrice[i], sd(sub$logReturn, na.rm = T), i, wb, "Risk");
         }
       }
     }
+
     if(writeToExcel){
-      saveWorkbook(wb, file, overwrite = TRUE)
+      saveWorkbook(wb, file, overwrite = T)
     }
     save(assets, closePrice, file = "Data/gooFinData.RData")
   }else{
     # loading data from file
-    load(file = "Data/gooFinData.RData", verbose=TRUE)
+    load(file = "Data/gooFinData.RData", verbose=T)
   }
 
   reMergInfo <- getDataMergInd(assets, wb=wb, ws= 'Risk',file=file)
@@ -170,11 +201,12 @@ if(openXLSXFile){
 }
 
 
-# Do: returns the assets indexes to merged based on minimum length and non empty and traded Volume not zero
+# Do: returns the assets indexes to merged based on minimum length and non empty
+# and traded Volume not zero
 getDataMergInd  <- function(assets, wb, ws, file,
                             minLength=350,
                             minNonZeroVolum=300,
-                            verbose=TRUE,
+                            verbose=T,
                             writeToExcel=T){
   dataMergInd <- c()
   dataNotMergInd <- c()
@@ -191,10 +223,11 @@ getDataMergInd  <- function(assets, wb, ws, file,
   show(dataMergInd)
   show(dataNotMergInd)
   }
+  # exporting the merged indicator into Row 3 and Col 22
   if(writeToExcel){
     dataMergIndPrint <- rep(0,length(assets))
     dataMergIndPrint[dataMergInd] = 1
-    writeData(wb, ws, dataMergIndPrint, startCol = 22, startRow = 14, rowNames = FALSE)
+    writeData(wb, ws, dataMergIndPrint, startCol = 22, startRow = 3, rowNames = FALSE)
     saveWorkbook(wb, file, overwrite = TRUE)
   }
 

@@ -3,15 +3,15 @@ workspace()
 using TimeSeries, Plots, Quandl, CSV, Stats, XLSXReader, DataFrames, RCall
 using RCall, Bootstrap
 using ExcelReaders
+using PyCall
 
- df = Dates.DateFormat("y-m-d");
- dataFileName = "2017-12-20 Port.xlsm"
+df = Dates.DateFormat("y-m-d");
+dataFileName = "2017-12-20 Port.xlsm"
 cd("$(homedir())/Documents/Julia/PortOpt")
 
 global level, position, closePrice, dataMergInd
 include("importPortData.jl")
-(position, nAssets, posNames) =
-portData(30)
+(position, posNames) = portData(36)
 
 ######################################################
  # get data for the last 3 years from googleFinance
@@ -19,20 +19,20 @@ portData(30)
 
 R"source('writeFinDataToExcel.R')";
 R"source('getData.R')";
-R"data <- myGoogleFinData(loadDataNew = F, nAssets=30)";
+R"data <- myGoogleFinData(loadDataNew = T,
+                          nAssets=37,
+                          indexDollarToEuro = c(1,2,3,5,7,9,19,20,21,27,28,30,32,33,34,35,36))";
 include("getDataRToJulia.jl")
 
 include("riskMeasure.jl")
-(singleVaR, singleES, reSingleVaRConfInt, reSingleESConfInt, cVar, pVar ) =
-getVaRESSingle(logReturns, 0.99, closePrice, position, ticker,
-dataMergInd, dataNotMergInd)
-
+(singleVaR, singleES, portVaR, portES, cVaR) =
+getVaRES(assetsHist, logReturns, dataMergInd,
+         dataNotMergInd, expToExcel = true)
 
 ######################################################
 # test case
 ######################################################
-getVaRES(assetsHist, logReturns, dataMergInd,
-         dataNotMergInd,expToExcel = false)
+
 
 include("riskMeasure.jl")
 test = zeros(Float64, (size(logReturns,1),2))
@@ -44,6 +44,15 @@ position = [1; 1]
 ticker = ticker[[1,2]]
 dataMergInd = [1,2]
 dataNotMergInd = [0]
+
+assetsHist = assetsHist[[1,2]]
+logReturns = test
+
+(singleVaR, singleES, portVaR, portES, cVaR) =
+getVaRES(assetsHist, test, dataMergInd,
+         dataNotMergInd, expToExcel = false, nBoot = 10000)
+
+
 
 (a, b, c, d, cVar2, portfolioVarTest) =
 getVaRESSingle(test, 0.99, closePrice, position, ticker,
